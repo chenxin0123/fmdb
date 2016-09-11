@@ -73,18 +73,18 @@ typedef int(^FMDBExecuteStatementsCallbackBlock)(NSDictionary *resultsDictionary
 @interface FMDatabase : NSObject  {
     
     void*               _db;
-    NSString*           _databasePath;
-    BOOL                _logsErrors;
-    BOOL                _crashOnErrors;
-    BOOL                _traceExecution;
+    NSString*           _databasePath;///<文件路径
+    BOOL                _logsErrors;///<是否打印错误 默认YES
+    BOOL                _crashOnErrors;///<出错的时候是否crash 默认NO
+    BOOL                _traceExecution;///是否打印日志
     BOOL                _checkedOut;
     BOOL                _shouldCacheStatements;
-    BOOL                _isExecutingStatement;
+    BOOL                _isExecutingStatement;///在代码级别又做了一次弱的锁
     BOOL                _inTransaction;
-    NSTimeInterval      _maxBusyRetryTimeInterval;
-    NSTimeInterval      _startBusyRetryTime;
+    NSTimeInterval      _maxBusyRetryTimeInterval;///<SQLITE_BUSY 重试时间 默认2秒
+    NSTimeInterval      _startBusyRetryTime;///<SQLITE_BUSY callback第一次调用时间
     
-    NSMutableDictionary *_cachedStatements;
+    NSMutableDictionary *_cachedStatements;///存放FMStatement的NSMutableSet
     NSMutableSet        *_openResultSets;
     NSMutableSet        *_openFunctions;
 
@@ -1124,9 +1124,9 @@ typedef int(^FMDBExecuteStatementsCallbackBlock)(NSDictionary *resultsDictionary
  */
 
 @interface FMStatement : NSObject {
-    void *_statement;
+    void *_statement;///<sqlite3_stmt
     NSString *_query;
-    long _useCount;
+    long _useCount;///sql使用次数
     BOOL _inUse;
 }
 

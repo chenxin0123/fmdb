@@ -32,8 +32,14 @@
     return [self initWithPath:nil];
 }
 
+
+/**
+ * 必须是Multi-thread|Serialized
+ * 初始化变量值 将path赋值给_databasePath 并没有打开数据库
+ */
 - (instancetype)initWithPath:(NSString*)aPath {
     
+    //The return value of the sqlite3_threadsafe() interface is determined by the compile-time threading mode selection. If single-thread mode is selected at compile-time, then sqlite3_threadsafe() returns false. If either the multi-thread or serialized modes are selected, then sqlite3_threadsafe() returns true.
     assert(sqlite3_threadsafe()); // whoa there big boy- gotta make sure sqlite it happy with what we're going to do.
     
     self = [super init];
@@ -50,6 +56,7 @@
     return self;
 }
 
+//Deprecated
 - (void)finalize {
     [self close];
     [super finalize];
@@ -104,7 +111,7 @@
 }
 
 #pragma mark SQLite information
-
+///返回SQLITE_VERSION的值
 + (NSString*)sqliteLibVersion {
     return [NSString stringWithFormat:@"%s", sqlite3_libversion()];
 }
@@ -114,10 +121,12 @@
     return sqlite3_threadsafe() != 0;
 }
 
+///返回数据库句柄
 - (void*)sqliteHandle {
     return _db;
 }
 
+///<返回数据库文件路径的c字符串
 - (const char*)sqlitePath {
     
     if (!_databasePath) {
@@ -134,11 +143,17 @@
 
 #pragma mark Open and close database
 
+/** 
+ * 调用sqlite3_open打开数据库
+ * 如果_maxBusyRetryTimeInterval大于0 调用setMaxBusyRetryTimeInterval
+ * 返回是否打开成功
+ */
 - (BOOL)open {
     if (_db) {
         return YES;
     }
     
+    //SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE This is the behavior that is always used for sqlite3_open() and sqlite3_open16().
     int err = sqlite3_open([self sqlitePath], (sqlite3**)&_db );
     if(err != SQLITE_OK) {
         NSLog(@"error opening!: %d", err);
@@ -150,10 +165,10 @@
         [self setMaxBusyRetryTimeInterval:_maxBusyRetryTimeInterval];
     }
     
-    
     return YES;
 }
 
+///调用sqlite3_open_v2打开数据库 具体参数看这里http://sqlite.org/c3ref/open.html
 - (BOOL)openWithFlags:(int)flags {
     return [self openWithFlags:flags vfs:nil];
 }
@@ -181,7 +196,7 @@
 #endif
 }
 
-
+///关闭数据库 失败则尝试关闭泄漏的sqlite3_stmt
 - (BOOL)close {
     
     [self clearCachedStatements];
@@ -202,6 +217,7 @@
             if (!triedFinalizingOpenStatements) {
                 triedFinalizingOpenStatements = YES;
                 sqlite3_stmt *pStmt;
+                //This interface returns a pointer to the next prepared statement after pStmt associated with the database connection pDb. If pStmt is NULL then this interface returns a pointer to the first prepared statement associated with the database connection pDb. If no prepared statement satisfies the conditions of this routine, it returns NULL.
                 while ((pStmt = sqlite3_next_stmt(_db, nil)) !=0) {
                     NSLog(@"Closing leaked statement");
                     sqlite3_finalize(pStmt);
@@ -231,9 +247,11 @@
 //       C function causes problems; the rest don't. Anyway, ignoring the .m
 //       files with appledoc will prevent this problem from occurring.
 
+//The first argument to the busy handler is a copy of the void* pointer which is the third argument to sqlite3_busy_handler(). The second argument to the busy handler callback is the number of times that the busy handler has been invoked previously for the same locking event. If the busy callback returns 0, then no additional attempts are made to access the database and SQLITE_BUSY is returned to the application. If the callback returns non-zero, then another attempt is made to access the database and the cycle repeats.
+//sqlite3_busy_handler 随机挂起当前线程50~100毫秒 然后返回非0int 直到delta>=maxBusyRetryTimeInterval
 static int FMDBDatabaseBusyHandler(void *f, int count) {
     FMDatabase *self = (__bridge FMDatabase*)f;
-    
+    //第一次调用
     if (count == 0) {
         self->_startBusyRetryTime = [NSDate timeIntervalSinceReferenceDate];
         return 1;
@@ -243,6 +261,9 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     
     if (delta < [self maxBusyRetryTimeInterval]) {
         int requestedSleepInMillseconds = (int) arc4random_uniform(50) + 50;
+        //The sqlite3_sleep() function causes the current thread to suspend execution for at least a number of milliseconds specified in its parameter.
+        
+        //If the operating system does not support sleep requests with millisecond time resolution, then the time will be rounded up to the nearest second. The number of milliseconds of sleep actually requested from the operating system is returned.
         int actualSleepInMilliseconds = sqlite3_sleep(requestedSleepInMillseconds);
         if (actualSleepInMilliseconds != requestedSleepInMillseconds) {
             NSLog(@"WARNING: Requested sleep of %i milliseconds, but SQLite returned %i. Maybe SQLite wasn't built with HAVE_USLEEP=1?", requestedSleepInMillseconds, actualSleepInMilliseconds);
@@ -253,6 +274,10 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return 0;
 }
 
+/**
+ *    设置SQLITE_BUSY回调
+ *    @param timeout 如果timeout<=0则清空回调
+ */
 - (void)setMaxBusyRetryTimeInterval:(NSTimeInterval)timeout {
     
     _maxBusyRetryTimeInterval = timeout;
@@ -261,6 +286,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
         return;
     }
     
+    //The sqlite3_busy_handler(D,X,P) routine sets a callback function X that might be invoked with argument P whenever an attempt is made to access a database table associated with database connection D when another thread or process has the table locked.
     if (timeout > 0) {
         sqlite3_busy_handler(_db, &FMDBDatabaseBusyHandler, (__bridge void *)(self));
     }
@@ -317,7 +343,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 }
 
 #pragma mark Cached statements
-
+///清除所有缓存的FMStatement
 - (void)clearCachedStatements {
     
     for (NSMutableSet *statements in [_cachedStatements objectEnumerator]) {
@@ -329,6 +355,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     [_cachedStatements removeAllObjects];
 }
 
+///从_cachedStatements取出一个FMStatement
 - (FMStatement*)cachedStatementForQuery:(NSString*)query {
     
     NSMutableSet* statements = [_cachedStatements objectForKey:query];
@@ -341,7 +368,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     }] anyObject];
 }
 
-
+///将FMStatement放入_cachedStatements
 - (void)setCachedStatement:(FMStatement*)statement forQuery:(NSString*)query {
     
     query = [query copy]; // in case we got handed in a mutable string...
@@ -359,7 +386,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     FMDBRelease(query);
 }
 
-#pragma mark Key routines
+#pragma mark Key routines AES加密数据库 需要购买才能使用
 
 - (BOOL)rekey:(NSString*)key {
     NSData *keyData = [NSData dataWithBytes:(void *)[key UTF8String] length:(NSUInteger)strlen([key UTF8String])];
@@ -439,6 +466,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 
 #pragma mark State of database
 
+///数据库是否正常打开的
 - (BOOL)goodConnection {
     
     if (!_db) {
@@ -455,6 +483,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return NO;
 }
 
+///_crashOnErrors abort();
 - (void)warnInUse {
     NSLog(@"The FMDatabase %@ is currently in use.", self);
     
@@ -466,6 +495,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 #endif
 }
 
+///_crashOnErrors abort();
 - (BOOL)databaseExists {
     
     if (!_db) {
@@ -487,10 +517,13 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 
 #pragma mark Error routines
 
+///The sqlite3_errmsg() and sqlite3_errmsg16() return English-language text that describes the error, as either UTF-8 or UTF-16 respectively. Memory to hold the error message string is managed internally. The application does not need to worry about freeing the result. However, the error string might be overwritten or deallocated by subsequent calls to other SQLite interface functions.
 - (NSString*)lastErrorMessage {
     return [NSString stringWithUTF8String:sqlite3_errmsg(_db)];
 }
 
+
+///If the most recent sqlite3_* API call associated with database connection D failed, then the sqlite3_errcode(D) interface returns the numeric result code or extended result code for that API call. If the most recent API call was successful, then the return value from sqlite3_errcode() is undefined.
 - (BOOL)hadError {
     int lastErrCode = [self lastErrorCode];
     
@@ -501,6 +534,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return sqlite3_errcode(_db);
 }
 
+///FMDatabase
 - (NSError*)errorWithMessage:(NSString*)message {
     NSDictionary* errorMessage = [NSDictionary dictionaryWithObject:message forKey:NSLocalizedDescriptionKey];
     
@@ -512,7 +546,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 }
 
 #pragma mark Update information routines
-
+///返回最后一次成功insert的rowid
 - (sqlite_int64)lastInsertRowId {
     
     if (_isExecutingStatement) {
@@ -529,6 +563,8 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return ret;
 }
 
+///返回最近一次sql执行改变的行数
+///The value returned by sqlite3_changes() immediately after an INSERT, UPDATE or DELETE statement run on a view is always zero. Only changes made to real tables are counted.
 - (int)changes {
     if (_isExecutingStatement) {
         [self warnInUse];
@@ -545,7 +581,11 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 }
 
 #pragma mark SQL manipulation
-
+///详情看这里 http://sqlite.org/c3ref/bind_blob.html
+///NSData < blob
+///NSDate < hasDateFormatter?text:double(timeIntervalSince1970)
+///NSNumber 根据objCType
+///text
 - (void)bindObject:(id)obj toColumn:(int)idx inStatement:(sqlite3_stmt*)pStmt {
     
     if ((!obj) || ((NSNull *)obj == [NSNull null])) {
@@ -560,6 +600,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
             // Don't pass a NULL pointer, or sqlite will bind a SQL null instead of a blob.
             bytes = "";
         }
+        //The fifth argument to the BLOB and string binding interfaces is a destructor used to dispose of the BLOB or string after SQLite has finished with it. The destructor is called to dispose of the BLOB or string even if the call to bind API fails. If the fifth argument is the special value SQLITE_STATIC, then SQLite assumes that the information is in static, unmanaged space and does not need to be freed.
         sqlite3_bind_blob(pStmt, idx, bytes, (int)[obj length], SQLITE_STATIC);
     }
     else if ([obj isKindOfClass:[NSDate class]]) {
@@ -618,6 +659,14 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     }
 }
 
+/**
+ *    将sql解析成(?,?,?)模式
+ *
+ *    @param sql        The SQL to be performed, with `printf`-style escape sequences.
+ *    @param args       可变参数
+ *    @param cleanedSQL 输出最后的sql
+ *    @param arguments  输出最后的参数
+ */
 - (void)extractSQL:(NSString *)sql argumentsList:(va_list)args intoString:(NSMutableString *)cleanedSQL arguments:(NSMutableArray *)arguments {
     
     NSUInteger length = [sql length];
@@ -718,7 +767,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
                     // something else that we can't interpret. just pass it on through like normal
                     break;
             }
-        }
+        }//if (last == '%')
         else if (current == '%') {
             // percent sign; skip this character
             add = '\0';
@@ -744,6 +793,9 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return [self executeQuery:sql withArgumentsInArray:nil orDictionary:arguments orVAList:nil];
 }
 
+///查询操作
+///如果dictionaryArgs非空 使用名称绑定 arrayArgs args 将被无视
+///如果dictionaryArgs为空 先从arrayArgs取 不够再从args取
 - (FMResultSet *)executeQuery:(NSString *)sql withArgumentsInArray:(NSArray*)arrayArgs orDictionary:(NSDictionary *)dictionaryArgs orVAList:(va_list)args {
     
     if (![self databaseExists]) {
@@ -761,7 +813,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     sqlite3_stmt *pStmt     = 0x00;
     FMStatement *statement  = 0x00;
     FMResultSet *rs         = 0x00;
-    
+    //打印日志
     if (_traceExecution && sql) {
         NSLog(@"%@ executeQuery: %@", self, sql);
     }
@@ -772,6 +824,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
         [statement reset];
     }
     
+    //sqlite3_prepare_v2 http://sqlite.org/c3ref/prepare.html
     if (!pStmt) {
         
         rc = sqlite3_prepare_v2(_db, [sql UTF8String], -1, &pStmt, 0);
@@ -796,6 +849,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     
     id obj;
     int idx = 0;
+    //This routine can be used to find the number of SQL parameters in a prepared statement. SQL parameters are tokens of the form "?", "?NNN", ":AAA", "$AAA", or "@AAA" that serve as placeholders for values that are bound to the parameters at a later time.
     int queryCount = sqlite3_bind_parameter_count(pStmt); // pointed out by Dominic Yu (thanks!)
     
     // If dictionaryArgs is passed in, that means we are using sqlite's named parameter support
@@ -811,6 +865,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
             }
             
             // Get the index for the parameter name.
+            //Return the index of an SQL parameter given its name. The index value returned is suitable for use as the second parameter to sqlite3_bind(). A zero is returned if no matching parameter is found.
             int namedIdx = sqlite3_bind_parameter_index(pStmt, [parameterName UTF8String]);
             
             FMDBRelease(parameterName);
@@ -877,7 +932,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     // the statement gets closed in rs's dealloc or [rs close];
     rs = [FMResultSet resultSetWithStatement:statement usingParentDatabase:self];
     [rs setQuery:sql];
-    
+    ///CXMARK
     NSValue *openResultSet = [NSValue valueWithNonretainedObject:rs];
     [_openResultSets addObject:openResultSet];
     
@@ -890,6 +945,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return rs;
 }
 
+///执行查询
 - (FMResultSet *)executeQuery:(NSString*)sql, ... {
     va_list args;
     va_start(args, sql);
@@ -900,6 +956,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return result;
 }
 
+///先将format以及可变参数解析成sqlite能识别的样式
 - (FMResultSet *)executeQueryWithFormat:(NSString*)format, ... {
     va_list args;
     va_start(args, format);
@@ -931,12 +988,15 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
 
 #pragma mark Execute updates
 
+///执行更新操作
 - (BOOL)executeUpdate:(NSString*)sql error:(NSError**)outErr withArgumentsInArray:(NSArray*)arrayArgs orDictionary:(NSDictionary *)dictionaryArgs orVAList:(va_list)args {
     
+    //检查数据库是否存在
     if (![self databaseExists]) {
         return NO;
     }
     
+    //是否正在执行操作
     if (_isExecutingStatement) {
         [self warnInUse];
         return NO;
@@ -1071,7 +1131,8 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     /* Call sqlite3_step() to run the virtual machine. Since the SQL being
      ** executed is not a SELECT statement, we assume no data will be returned.
      */
-    
+    //After a prepared statement has been prepared this function must be called one or more times to evaluate the statement.
+    //If the SQL statement being executed returns any data, then SQLITE_ROW is returned each time a new row of data is ready for processing by the caller. The values may be accessed using the column access functions. sqlite3_step() is called again to retrieve the next row of data.
     rc      = sqlite3_step(pStmt);
     
     if (SQLITE_DONE == rc) {
@@ -1132,7 +1193,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     
     int closeErrorCode;
     
-    if (cachedStmt) {
+    if (cachedStmt) {//缓存后调用sqlite3_reset
         [cachedStmt setUseCount:[cachedStmt useCount] + 1];
         closeErrorCode = sqlite3_reset(pStmt);
     }
@@ -1195,7 +1256,7 @@ static int FMDBDatabaseBusyHandler(void *f, int count) {
     return [self executeUpdate:sql withArgumentsInArray:arguments];
 }
 
-
+///executeStatements中的回调
 int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values, char **names); // shhh clang.
 int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values, char **names) {
     
@@ -1216,6 +1277,7 @@ int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values,
     return execCallbackBlock(dictionary);
 }
 
+///执行sql语句
 - (BOOL)executeStatements:(NSString *)sql {
     return [self executeStatements:sql withResultBlock:nil];
 }
@@ -1225,8 +1287,11 @@ int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values,
     int rc;
     char *errmsg = nil;
     
+    //The sqlite3_exec() interface is a convenience wrapper around sqlite3_prepare_v2(), sqlite3_step(), and sqlite3_finalize(), that allows an application to run multiple statements of SQL without having to use a lot of C code.
+    //If the callback function of the 3rd argument to sqlite3_exec() is not NULL, then it is invoked for each result row coming out of the evaluated SQL statements.
     rc = sqlite3_exec([self sqliteHandle], [sql UTF8String], block ? FMDBExecuteBulkSQLCallback : nil, (__bridge void *)(block), &errmsg);
     
+    //To avoid memory leaks, the application should invoke sqlite3_free() on error message strings returned through the 5th parameter of sqlite3_exec() after the error message string is no longer needed.
     if (errmsg && [self logsErrors]) {
         NSLog(@"Error inserting batch: %s", errmsg);
         sqlite3_free(errmsg);
@@ -1235,6 +1300,7 @@ int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values,
     return (rc == SQLITE_OK);
 }
 
+///[self executeUpdate:sql error:outErr withArgumentsInArray:nil orDictionary:nil orVAList:args];
 - (BOOL)executeUpdate:(NSString*)sql withErrorAndBindings:(NSError**)outErr, ... {
     
     va_list args;
@@ -1263,6 +1329,7 @@ int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values,
 
 #pragma mark Transactions
 
+//http://sqlite.org/lang_transaction.html
 - (BOOL)rollback {
     BOOL b = [self executeUpdate:@"rollback transaction"];
     
@@ -1284,7 +1351,7 @@ int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values,
 }
 
 - (BOOL)beginDeferredTransaction {
-    
+    //Transactions can be deferred, immediate, or exclusive. The default transaction behavior is deferred. Deferred means that no locks are acquired on the database until the database is first accessed.
     BOOL b = [self executeUpdate:@"begin deferred transaction"];
     if (b) {
         _inTransaction = YES;
@@ -1310,12 +1377,15 @@ int FMDBExecuteBulkSQLCallback(void *theBlockAsVoid, int columns, char **values,
 - (BOOL)interrupt
 {
     if (_db) {
+        //This function causes any pending database operation to abort and return at its earliest opportunity. This routine is typically called in response to a user action such as pressing "Cancel" or Ctrl-C where the user wants a long query operation to halt immediately.
         sqlite3_interrupt([self sqliteHandle]);
         return YES;
     }
     return NO;
 }
 
+//Transactions created using BEGIN...COMMIT do not nest. For nested transactions, use the SAVEPOINT and RELEASE commands.
+//http://sqlite.org/lang_savepoint.html
 static NSString *FMDBEscapeSavePointName(NSString *savepointName) {
     return [savepointName stringByReplacingOccurrencesOfString:@"'" withString:@"''"];
 }
@@ -1362,6 +1432,7 @@ static NSString *FMDBEscapeSavePointName(NSString *savepointName) {
 #endif
 }
 
+///开始一个savepoint 在savepoint中执行block
 - (NSError*)inSavePoint:(void (^)(BOOL *rollback))block {
 #if SQLITE_VERSION_NUMBER >= 3007000
     static unsigned long savePointIdx = 0;
@@ -1428,7 +1499,7 @@ void FMDBBlockSQLiteCallBackFunction(sqlite3_context *context, int argc, sqlite3
     }
 }
 
-
+///http://sqlite.org/c3ref/create_function.html
 - (void)makeFunctionNamed:(NSString*)name maximumArguments:(int)count withBlock:(void (^)(void *context, int argc, void **argv))block {
     
     if (!_openFunctions) {
@@ -1450,13 +1521,21 @@ void FMDBBlockSQLiteCallBackFunction(sqlite3_context *context, int argc, sqlite3
 @end
 
 
-
+/**
+ The life-cycle of a prepared statement object usually goes like this:
+ 
+ Create the prepared statement object using sqlite3_prepare_v2().
+ Bind values to parameters using the sqlite3_bind_*() interfaces.
+ Run the SQL by calling sqlite3_step() one or more times.
+ Reset the prepared statement using sqlite3_reset() then go back to step 2. Do this zero or more times.
+ Destroy the object using sqlite3_finalize().
+ */
 @implementation FMStatement
 @synthesize statement=_statement;
 @synthesize query=_query;
 @synthesize useCount=_useCount;
 @synthesize inUse=_inUse;
-
+//Deprecated
 - (void)finalize {
     [self close];
     [super finalize];
@@ -1472,6 +1551,8 @@ void FMDBBlockSQLiteCallBackFunction(sqlite3_context *context, int argc, sqlite3
 
 - (void)close {
     if (_statement) {
+        //The sqlite3_finalize() function is called to delete a prepared statement.
+        //The sqlite3_finalize(S) routine can be called at any point during the life cycle of prepared statement S: before statement S is ever evaluated, after one or more calls to sqlite3_reset(), or after any call to sqlite3_step() regardless of whether or not the statement has completed execution.
         sqlite3_finalize(_statement);
         _statement = 0x00;
     }
@@ -1481,6 +1562,7 @@ void FMDBBlockSQLiteCallBackFunction(sqlite3_context *context, int argc, sqlite3
 
 - (void)reset {
     if (_statement) {
+        //The sqlite3_reset() function is called to reset a prepared statement object back to its initial state, ready to be re-executed.
         sqlite3_reset(_statement);
     }
     
