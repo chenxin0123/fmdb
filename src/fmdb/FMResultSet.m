@@ -17,6 +17,7 @@
 @synthesize query=_query;
 @synthesize statement=_statement;
 
+///延迟加载 并没有立即去执行statement 而是将inUse设为yes
 + (instancetype)resultSetWithStatement:(FMStatement *)statement usingParentDatabase:(FMDatabase*)aDB {
     
     FMResultSet *rs = [[FMResultSet alloc] init];
@@ -61,9 +62,11 @@
 }
 
 - (int)columnCount {
+    //Return the number of columns in the result set returned by the prepared statement. This routine returns 0 if pStmt is an SQL statement that does not return data (for example an UPDATE).
     return sqlite3_column_count([_statement statement]);
 }
 
+///列名跟索引的映射
 - (NSMutableDictionary *)columnNameToIndexMap {
     if (!_columnNameToIndexMap) {
         int columnCount = sqlite3_column_count([_statement statement]);
@@ -77,6 +80,7 @@
     return _columnNameToIndexMap;
 }
 
+///为object中的对象赋值 使用KVC 对象key为列名
 - (void)kvcMagic:(id)object {
     
     int columnCount = sqlite3_column_count([_statement statement]);
@@ -124,7 +128,7 @@
 #pragma clang diagnostic pop
 
 - (NSDictionary*)resultDictionary {
-    
+    //http://sqlite.org/c3ref/data_count.html 注意跟sqlite3_column_count的差别
     NSUInteger num_cols = (NSUInteger)sqlite3_data_count([_statement statement]);
     
     if (num_cols > 0) {
@@ -149,15 +153,13 @@
     return nil;
 }
 
-
-
-
 - (BOOL)next {
     return [self nextWithError:nil];
 }
 
+///sqlite3_step http://sqlite.org/c3ref/step.html 如果返回SQLITE_DONE [self closes]
 - (BOOL)nextWithError:(NSError **)outErr {
-    
+    //After a prepared statement has been prepared using either sqlite3_prepare_v2() or sqlite3_prepare16_v2() or one of the legacy interfaces sqlite3_prepare() or sqlite3_prepare16(), this function must be called one or more times to evaluate the statement.
     int rc = sqlite3_step([_statement statement]);
     
     if (SQLITE_BUSY == rc || SQLITE_LOCKED == rc) {
@@ -200,7 +202,7 @@
         }
     }
     
-    
+    //update operation
     if (rc != SQLITE_ROW) {
         [self close];
     }
@@ -208,10 +210,12 @@
     return (rc == SQLITE_ROW);
 }
 
-- (BOOL)hasAnotherRow {
+- (BOOL)hasAnotherRow {//???
+    // If the most recent API call was successful, then the return value from sqlite3_errcode() is undefined. ?
     return sqlite3_errcode([_parentDB sqliteHandle]) == SQLITE_ROW;
 }
 
+///根据列名返回列的索引
 - (int)columnIndexForName:(NSString*)columnName {
     columnName = [columnName lowercaseString];
     
@@ -226,12 +230,12 @@
     return -1;
 }
 
-
-
 - (int)intForColumn:(NSString*)columnName {
     return [self intForColumnIndex:[self columnIndexForName:columnName]];
 }
 
+///http://sqlite.org/c3ref/column_blob.html
+//These routines may only be called when the most recent call to sqlite3_step() has returned SQLITE_ROW and neither sqlite3_reset() nor sqlite3_finalize() have been called subsequently.
 - (int)intForColumnIndex:(int)columnIdx {
     return sqlite3_column_int([_statement statement], columnIdx);
 }
@@ -277,7 +281,7 @@
 }
 
 - (NSString*)stringForColumnIndex:(int)columnIdx {
-    
+    //The sqlite3_column_type() routine returns the datatype code for the initial data type of the result column. The returned value is one of SQLITE_INTEGER, SQLITE_FLOAT, SQLITE_TEXT, SQLITE_BLOB, or SQLITE_NULL.
     if (sqlite3_column_type([_statement statement], columnIdx) == SQLITE_NULL || (columnIdx < 0)) {
         return nil;
     }

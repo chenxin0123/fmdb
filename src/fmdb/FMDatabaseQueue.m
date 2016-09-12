@@ -133,6 +133,7 @@ static const void * const kDispatchQueueSpecificKey = &kDispatchQueueSpecificKey
     [[self database] interrupt];
 }
 
+///打开数据库
 - (FMDatabase*)database {
     if (!_db) {
        _db = FMDBReturnRetained([[[self class] databaseClass] databaseWithPath:_path]);

@@ -68,7 +68,6 @@ return ret;
     tableName = [tableName lowercaseString];
     
     FMResultSet *rs = [self executeQuery:@"select [sql] from sqlite_master where [type] = 'table' and lower(name) = ?", tableName];
-    
     //if at least one next exists, table exists
     BOOL returnBool = [rs next];
     
@@ -123,8 +122,6 @@ return ret;
     
     return returnBool;
 }
-
-
 
 - (uint32_t)applicationID {
 #if SQLITE_VERSION_NUMBER >= 3007017
